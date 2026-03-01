@@ -4,7 +4,13 @@ const BASE = import.meta.env.BASE_URL;
 
 async function fetchBinary(path: string): Promise<Float32Array> {
   const response = await fetch(`${BASE}data/${path}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${path}: ${response.status} ${response.statusText}`);
+  }
   const buffer = await response.arrayBuffer();
+  if (buffer.byteLength % 4 !== 0) {
+    throw new Error(`${path}: buffer size ${buffer.byteLength} is not a multiple of 4 — file may be corrupted or an LFS pointer`);
+  }
   return new Float32Array(buffer);
 }
 

@@ -27,6 +27,10 @@ INPUT_SIZE = 227
 
 CAT_IMAGE_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/1200px-Cat03.jpg"
 
+# Set to True to export FC layer weight/bias .bin files (~230 MB).
+# When False, FC layers appear as blank rectangles in the visualization.
+SAVE_FC_WEIGHTS = False
+
 
 def ensure_dirs(base_path: str):
     """Create all necessary output directories."""
@@ -171,12 +175,15 @@ def main():
     save_tensor_bin(model.features[8].bias, os.path.join(weights_dir, "conv4_bias.bin"))
     save_tensor_bin(model.features[10].weight, os.path.join(weights_dir, "conv5_weight.bin"))
     save_tensor_bin(model.features[10].bias, os.path.join(weights_dir, "conv5_bias.bin"))
-    save_tensor_bin(model.classifier[1].weight, os.path.join(weights_dir, "fc6_weight.bin"))
-    save_tensor_bin(model.classifier[1].bias, os.path.join(weights_dir, "fc6_bias.bin"))
-    save_tensor_bin(model.classifier[4].weight, os.path.join(weights_dir, "fc7_weight.bin"))
-    save_tensor_bin(model.classifier[4].bias, os.path.join(weights_dir, "fc7_bias.bin"))
-    save_tensor_bin(model.classifier[6].weight, os.path.join(weights_dir, "fc8_weight.bin"))
-    save_tensor_bin(model.classifier[6].bias, os.path.join(weights_dir, "fc8_bias.bin"))
+    if SAVE_FC_WEIGHTS:
+        save_tensor_bin(model.classifier[1].weight, os.path.join(weights_dir, "fc6_weight.bin"))
+        save_tensor_bin(model.classifier[1].bias, os.path.join(weights_dir, "fc6_bias.bin"))
+        save_tensor_bin(model.classifier[4].weight, os.path.join(weights_dir, "fc7_weight.bin"))
+        save_tensor_bin(model.classifier[4].bias, os.path.join(weights_dir, "fc7_bias.bin"))
+        save_tensor_bin(model.classifier[6].weight, os.path.join(weights_dir, "fc8_weight.bin"))
+        save_tensor_bin(model.classifier[6].bias, os.path.join(weights_dir, "fc8_bias.bin"))
+    else:
+        print("  Skipping FC weights (SAVE_FC_WEIGHTS=False)")
 
     # 9. Save all activations
     print("\n6. Saving activations...")
@@ -374,9 +381,11 @@ def main():
                 "shape": [fc6.out_features],
                 "out_features": fc6.out_features,
                 "in_features": fc6.in_features,
-                "weights_file": "weights/fc6_weight.bin",
-                "weights_shape": list(fc6.weight.shape),
-                "bias_file": "weights/fc6_bias.bin",
+                **({
+                    "weights_file": "weights/fc6_weight.bin",
+                    "weights_shape": list(fc6.weight.shape),
+                    "bias_file": "weights/fc6_bias.bin",
+                } if SAVE_FC_WEIGHTS else {}),
                 "activations_file": "activations/fc6.bin",
                 "input_layer": "flatten"
             },
@@ -393,9 +402,11 @@ def main():
                 "shape": [fc7.out_features],
                 "out_features": fc7.out_features,
                 "in_features": fc7.in_features,
-                "weights_file": "weights/fc7_weight.bin",
-                "weights_shape": list(fc7.weight.shape),
-                "bias_file": "weights/fc7_bias.bin",
+                **({
+                    "weights_file": "weights/fc7_weight.bin",
+                    "weights_shape": list(fc7.weight.shape),
+                    "bias_file": "weights/fc7_bias.bin",
+                } if SAVE_FC_WEIGHTS else {}),
                 "activations_file": "activations/fc7.bin",
                 "input_layer": "relu6"
             },
@@ -412,9 +423,11 @@ def main():
                 "shape": [fc8.out_features],
                 "out_features": fc8.out_features,
                 "in_features": fc8.in_features,
-                "weights_file": "weights/fc8_weight.bin",
-                "weights_shape": list(fc8.weight.shape),
-                "bias_file": "weights/fc8_bias.bin",
+                **({
+                    "weights_file": "weights/fc8_weight.bin",
+                    "weights_shape": list(fc8.weight.shape),
+                    "bias_file": "weights/fc8_bias.bin",
+                } if SAVE_FC_WEIGHTS else {}),
                 "activations_file": "activations/fc8.bin",
                 "input_layer": "relu7"
             },
