@@ -33,14 +33,14 @@ export async function loadModelData(): Promise<ModelData> {
       let weights: TensorData | undefined;
       let bias: TensorData | undefined;
 
-      if (def.weights_file && def.weights_shape) {
+      if (def.weights_file && def.weights_shape && def.type !== 'linear') {
         weights = {
           data: await fetchBinary(def.weights_file),
           shape: def.weights_shape,
         };
       }
 
-      if (def.bias_file) {
+      if (def.bias_file && def.type !== 'linear') {
         bias = {
           data: await fetchBinary(def.bias_file),
           shape: [def.shape[0]],

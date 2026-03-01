@@ -73,41 +73,6 @@ function getFilter(
   return weights.slice(outChannel * filterSize, (outChannel + 1) * filterSize);
 }
 
-function drawLinearWeightHeatmap(
-  ctx: CanvasRenderingContext2D,
-  block: LayerBlock,
-  modelData: ModelData,
-) {
-  const layer = modelData.layers.get(block.id);
-  if (!layer?.weights) return false;
-
-  const { x, y, width, height } = block;
-  const w = layer.weights.data;
-  const [outF, inF] = layer.weights.shape;
-  const { min: wMin, max: wMax } = minMax(w);
-  const range = wMax - wMin || 1;
-  const sampleH = Math.min(128, outF);
-  const sampleW = Math.min(128, inF);
-  const imgData = ctx.createImageData(sampleW, sampleH);
-  for (let r = 0; r < sampleH; r++) {
-    for (let c = 0; c < sampleW; c++) {
-      const srcRow = Math.floor((r / sampleH) * outF);
-      const srcCol = Math.floor((c / sampleW) * inF);
-      const norm = (w[srcRow * inF + srcCol] - wMin) / range;
-      const [rv, gv, bv] = valueToColor(norm);
-      const idx = (r * sampleW + c) * 4;
-      imgData.data[idx] = rv;
-      imgData.data[idx + 1] = gv;
-      imgData.data[idx + 2] = bv;
-      imgData.data[idx + 3] = 255;
-    }
-  }
-  const offscreen = new OffscreenCanvas(sampleW, sampleH);
-  const offCtx = offscreen.getContext('2d')!;
-  offCtx.putImageData(imgData, 0, 0);
-  ctx.drawImage(offscreen, x, y, width, height);
-  return true;
-}
 
 function drawSoftmaxBlock(
   ctx: CanvasRenderingContext2D,
@@ -198,10 +163,8 @@ function drawBlock(
   const baseColor = LAYER_COLORS[block.type] || '#888';
 
   if (block.type === 'linear' && block.is1D) {
-    if (!drawLinearWeightHeatmap(ctx, block, modelData)) {
-      ctx.fillStyle = baseColor;
-      ctx.fillRect(x, y, width, height);
-    }
+    ctx.fillStyle = baseColor;
+    ctx.fillRect(x, y, width, height);
   } else if (block.type === 'softmax' && block.is1D) {
     drawSoftmaxBlock(ctx, block, modelData, softmaxScroll);
   } else if (block.isKernel && block.parentConvId) {
