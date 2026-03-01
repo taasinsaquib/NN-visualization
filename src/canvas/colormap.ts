@@ -14,7 +14,7 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 export function valueToColor(value: number): [number, number, number] {
-  const v = Math.max(0, Math.min(1, value));
+  const v = isNaN(value) ? 0 : Math.max(0, Math.min(1, value));
   const scaled = v * (VIRIDIS.length - 1);
   const i0 = Math.floor(scaled);
   const i1 = Math.min(i0 + 1, VIRIDIS.length - 1);
