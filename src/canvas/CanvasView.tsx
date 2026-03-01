@@ -123,8 +123,37 @@ function drawBlock(
       ctx.fillStyle = baseColor;
       ctx.fillRect(x, y, width, height);
     }
-  } else if (block.type === 'input' && imageRef.current?.complete) {
-    ctx.drawImage(imageRef.current, x, y, width, height);
+  } else if (block.type === 'input') {
+    const inputCh = channelMap[block.id] ?? 0;
+    if (inputCh === 0 && imageRef.current?.complete) {
+      ctx.drawImage(imageRef.current, x, y, width, height);
+    } else {
+      const inputLayer = modelData.layers.get('input');
+      if (inputLayer && inputCh >= 1 && inputCh <= 3) {
+        const ch = inputCh - 1;
+        const channelData = getChannel(
+          inputLayer.activations.data,
+          inputLayer.activations.shape,
+          ch
+        );
+        const { min, max } = minMax(channelData);
+        const normalized = normalize(channelData, min, max);
+        const imgData = ctx.createImageData(block.spatialW, block.spatialH);
+        for (let i = 0; i < normalized.length; i++) {
+          const [r, g, b] = valueToColor(normalized[i]);
+          imgData.data[i * 4] = r;
+          imgData.data[i * 4 + 1] = g;
+          imgData.data[i * 4 + 2] = b;
+          imgData.data[i * 4 + 3] = 255;
+        }
+        const offscreen = new OffscreenCanvas(block.spatialW, block.spatialH);
+        const offCtx = offscreen.getContext('2d')!;
+        offCtx.putImageData(imgData, 0, 0);
+        ctx.drawImage(offscreen, x, y, width, height);
+      } else if (imageRef.current?.complete) {
+        ctx.drawImage(imageRef.current, x, y, width, height);
+      }
+    }
   } else {
     const layer = modelData.layers.get(block.id);
     if (layer) {
@@ -183,6 +212,26 @@ function drawBlock(
   ctx.strokeStyle = 'rgba(255,255,255,0.3)';
   ctx.stroke();
 
+  const selCh = channelMap[block.id] ?? 0;
+  let t = -1;
+  if (!block.isKernel && block.channels > 0) {
+    if (block.type === 'input') {
+      if (selCh >= 1 && selCh <= 3) t = (selCh - 1) / 3;
+    } else if (selCh < block.channels) {
+      t = selCh / block.channels;
+    }
+  }
+  if (t >= 0) {
+    const ly = y + t * height;
+    const ry = y + depthOffsetY + t * height;
+    ctx.strokeStyle = '#ff0';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, ly);
+    ctx.lineTo(x + depthOffsetX, ry);
+    ctx.stroke();
+  }
+
   ctx.fillStyle = '#ccc';
   ctx.font = '12px monospace';
   ctx.textAlign = 'center';
@@ -198,7 +247,7 @@ function drawExplodedBlock(
   block: LayerBlock,
   modelData: ModelData,
   channelMap: Record<string, number>,
-  imageRef: React.RefObject<HTMLImageElement | null>,
+  _imageRef: React.RefObject<HTMLImageElement | null>,
 ) {
   const { x } = block;
   const gridStartY = block.y + block.height + 40;
@@ -391,7 +440,7 @@ function drawRfMiniBlock(
   ctx.fillStyle = '#ffd700';
   ctx.font = '10px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(`${rfH}×${rfW}`, miniX + miniW / 2, miniY - 4);
+  ctx.fillText(`${cropH}×${cropW}`, miniX + miniW / 2, miniY - 4);
 
   const pxPerRow = block.height / block.spatialH;
   const pxPerCol = block.width / block.spatialW;
@@ -434,6 +483,41 @@ function drawScene(
       drawExplodedBlock(ctx, block, modelData, channelMap, imageRef);
     } else {
       drawBlock(ctx, block, modelData, channelMap, imageRef);
+    }
+  }
+
+  if (!rfSelection) {
+    for (const block of layout.blocks) {
+      if (!block.isKernel && block.id !== 'input') {
+        const layer = modelData.layers.get(block.id);
+        if (layer) {
+          const ch = Math.min(channelMap[block.id] ?? 0, block.channels - 1);
+          const channelData = getChannel(layer.activations.data, layer.activations.shape, ch);
+          const { min, max } = minMax(channelData);
+          const normalized = normalize(channelData, min, max);
+          const maxSide = Math.max(block.spatialW, block.spatialH);
+          const scale = Math.min(100 / maxSide, 1);
+          const prevW = block.spatialW * scale;
+          const prevH = block.spatialH * scale;
+          const prevX = block.x + block.width / 2 - prevW / 2;
+          const prevY = block.y - prevH - 25;
+          const imgData = ctx.createImageData(block.spatialW, block.spatialH);
+          for (let i = 0; i < normalized.length; i++) {
+            const [r, g, b] = valueToColor(normalized[i]);
+            imgData.data[i * 4] = r;
+            imgData.data[i * 4 + 1] = g;
+            imgData.data[i * 4 + 2] = b;
+            imgData.data[i * 4 + 3] = 255;
+          }
+          const offscreen = new OffscreenCanvas(block.spatialW, block.spatialH);
+          const offCtx = offscreen.getContext('2d')!;
+          offCtx.putImageData(imgData, 0, 0);
+          ctx.drawImage(offscreen, prevX, prevY, prevW, prevH);
+          ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(prevX, prevY, prevW, prevH);
+        }
+      }
     }
   }
 

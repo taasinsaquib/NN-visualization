@@ -23,6 +23,7 @@ function App() {
     row: number;
     col: number;
   } | null>(null);
+  const [rfMiniChannelMap, setRfMiniChannelMap] = useState<Record<string, number>>({});
 
   useEffect(() => {
     loadModelData()
@@ -50,7 +51,9 @@ function App() {
 
   const selectedLayer =
     selectedBlock && modelData ? modelData.layers.get(selectedBlock) : null;
-  const maxChannel = selectedLayer ? selectedLayer.def.shape[0] - 1 : 0;
+  const isInput = selectedBlock === 'input';
+  const maxChannel = isInput ? 3 : (selectedLayer ? selectedLayer.def.shape[0] - 1 : 0);
+  const channelLabel = isInput ? (['RGB', 'Red', 'Green', 'Blue'][getChannel(selectedBlock ?? '')] ?? 'Channel') : 'Channel';
   const isConv = selectedLayer?.def.type === 'conv';
 
   const handleExplodeToggle = useCallback(() => {
@@ -62,6 +65,28 @@ function App() {
     setSyncedChannel(blockId, channel);
     setExplodedBlock(null);
   }, [setSyncedChannel]);
+
+  const handleRfSelect = useCallback((sel: typeof rfSelection) => {
+    setRfSelection(sel);
+    if (!sel) setRfMiniChannelMap({});
+  }, []);
+
+  const handleRfMiniChannelChange = useCallback(
+    (layerId: string, delta: number) => {
+      if (!modelData) return;
+      const layer = modelData.layers.get(layerId);
+      if (!layer) return;
+      const maxCh = layer.def.shape[0] - 1;
+      setRfMiniChannelMap((prev) => {
+        const current = prev[layerId] ?? 0;
+        let next = current + delta;
+        if (next > maxCh) next = 0;
+        else if (next < 0) next = maxCh;
+        return { ...prev, [layerId]: next };
+      });
+    },
+    [modelData]
+  );
 
   return (
     <div className="flex h-screen w-screen bg-gray-950 text-white">
@@ -80,12 +105,14 @@ function App() {
           <CanvasView
             modelData={modelData}
             channelMap={channelMap}
+            rfMiniChannelMap={rfMiniChannelMap}
             explodedBlock={explodedBlock}
             rfSelection={rfSelection}
             onBlockClick={setSelectedBlock}
             onExplode={setExplodedBlock}
             onChannelSelect={handleChannelSelect}
-            onRfSelect={setRfSelection}
+            onRfSelect={handleRfSelect}
+            onRfMiniChannelChange={handleRfMiniChannelChange}
           />
         )}
       </main>
@@ -116,12 +143,17 @@ function App() {
                     <p className="text-sm text-gray-300">Activation: {activation.toFixed(4)}</p>
                   )}
                   <div className="mt-2 space-y-1">
-                    <p className="text-xs text-gray-500 uppercase tracking-wider">RF per layer</p>
-                    {regions.map((r) => (
-                      <p key={r.layerId} className="text-sm text-gray-300 font-mono">
-                        {r.layerId}: {r.endRow - r.startRow}×{r.endCol - r.startCol} [{r.startRow}:{r.endRow}, {r.startCol}:{r.endCol}]
-                      </p>
-                    ))}
+                    <p className="text-xs text-gray-500 uppercase tracking-wider">RF per layer (scroll on mini-block to change channel)</p>
+                    {regions.map((r) => {
+                      const layer = modelData.layers.get(r.layerId);
+                      const maxCh = layer ? layer.def.shape[0] - 1 : 0;
+                      const ch = rfMiniChannelMap[r.layerId] ?? channelMap[r.layerId] ?? 0;
+                      return (
+                        <p key={r.layerId} className="text-sm text-gray-300 font-mono">
+                          {r.layerId}: {r.endRow - r.startRow}×{r.endCol - r.startCol} ch {ch}/{maxCh}
+                        </p>
+                      );
+                    })}
                   </div>
                 </>
               );
@@ -152,7 +184,7 @@ function App() {
             )}
             <div>
               <label className="text-sm text-gray-400 block mb-1">
-                Channel: {getChannel(selectedLayer.def.id)}
+                {isInput ? channelLabel : `Channel: ${getChannel(selectedLayer.def.id)}`}
               </label>
               <input
                 type="range"
