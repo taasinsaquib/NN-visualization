@@ -33,7 +33,6 @@ interface CanvasViewProps {
 }
 
 const SOFTMAX_ROW_H = 16;
-const SOFTMAX_VISIBLE_ROWS = 18;
 
 const LAYER_COLORS: Record<string, string> = {
   input: '#4a9eff',
