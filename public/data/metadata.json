@@ -1,0 +1,113 @@
+{
+  "image": "cat",
+  "layers": [
+    {
+      "id": "input",
+      "type": "input",
+      "shape": [
+        3,
+        227,
+        227
+      ],
+      "activations_file": "activations/input.bin"
+    },
+    {
+      "id": "conv1",
+      "type": "conv",
+      "shape": [
+        64,
+        56,
+        56
+      ],
+      "groups": 1,
+      "kernel_size": 11,
+      "stride": 4,
+      "padding": 2,
+      "in_channels": 3,
+      "weights_file": "weights/conv1_weight.bin",
+      "weights_shape": [
+        64,
+        3,
+        11,
+        11
+      ],
+      "bias_file": "weights/conv1_bias.bin",
+      "activations_file": "activations/conv1.bin",
+      "input_layer": "input"
+    },
+    {
+      "id": "relu1",
+      "type": "relu",
+      "shape": [
+        64,
+        56,
+        56
+      ],
+      "activations_file": "activations/relu1.bin",
+      "input_layer": "conv1"
+    },
+    {
+      "id": "pool1",
+      "type": "maxpool",
+      "shape": [
+        64,
+        27,
+        27
+      ],
+      "kernel_size": 3,
+      "stride": 2,
+      "padding": 0,
+      "activations_file": "activations/pool1.bin",
+      "input_layer": "relu1"
+    },
+    {
+      "id": "conv2",
+      "type": "conv",
+      "shape": [
+        192,
+        27,
+        27
+      ],
+      "groups": 1,
+      "kernel_size": 5,
+      "stride": 1,
+      "padding": 2,
+      "in_channels": 64,
+      "weights_file": "weights/conv2_weight.bin",
+      "weights_shape": [
+        192,
+        64,
+        5,
+        5
+      ],
+      "bias_file": "weights/conv2_bias.bin",
+      "activations_file": "activations/conv2.bin",
+      "input_layer": "pool1"
+    },
+    {
+      "id": "relu2",
+      "type": "relu",
+      "shape": [
+        192,
+        27,
+        27
+      ],
+      "activations_file": "activations/relu2.bin",
+      "input_layer": "conv2"
+    },
+    {
+      "id": "pool2",
+      "type": "maxpool",
+      "shape": [
+        192,
+        13,
+        13
+      ],
+      "kernel_size": 3,
+      "stride": 2,
+      "padding": 0,
+      "activations_file": "activations/pool2.bin",
+      "input_layer": "relu2"
+    }
+  ]
+}
