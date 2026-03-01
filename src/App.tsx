@@ -8,6 +8,9 @@ import { get3D } from './utils/tensor';
 const CHANNEL_GROUPS: string[][] = [
   ['conv1', 'relu1', 'pool1'],
   ['conv2', 'relu2', 'pool2'],
+  ['conv3', 'relu3'],
+  ['conv4', 'relu4'],
+  ['conv5', 'relu5', 'pool5'],
 ];
 
 function App() {
@@ -24,6 +27,7 @@ function App() {
     col: number;
   } | null>(null);
   const [rfMiniChannelMap, setRfMiniChannelMap] = useState<Record<string, number>>({});
+  const [showPreviews, setShowPreviews] = useState(false);
 
   useEffect(() => {
     loadModelData()
@@ -44,14 +48,21 @@ function App() {
         for (const id of group) next[id] = ch;
         return next;
       });
+      setRfMiniChannelMap((prev) => {
+        const next = { ...prev };
+        for (const id of group) next[id] = ch;
+        return next;
+      });
     } else {
       setChannelMap((prev) => ({ ...prev, [layerId]: ch }));
+      setRfMiniChannelMap((prev) => ({ ...prev, [layerId]: ch }));
     }
   }, []);
 
   const selectedLayer =
     selectedBlock && modelData ? modelData.layers.get(selectedBlock) : null;
   const isInput = selectedBlock === 'input';
+  const is1D = selectedLayer && selectedLayer.def.shape.length === 1;
   const maxChannel = isInput ? 3 : (selectedLayer ? selectedLayer.def.shape[0] - 1 : 0);
   const channelLabel = isInput ? (['RGB', 'Red', 'Green', 'Blue'][getChannel(selectedBlock ?? '')] ?? 'Channel') : 'Channel';
   const isConv = selectedLayer?.def.type === 'conv';
@@ -63,7 +74,6 @@ function App() {
 
   const handleChannelSelect = useCallback((blockId: string, channel: number) => {
     setSyncedChannel(blockId, channel);
-    setExplodedBlock(null);
   }, [setSyncedChannel]);
 
   const handleRfSelect = useCallback((sel: typeof rfSelection) => {
@@ -113,11 +123,43 @@ function App() {
             onChannelSelect={handleChannelSelect}
             onRfSelect={handleRfSelect}
             onRfMiniChannelChange={handleRfMiniChannelChange}
+            showPreviews={showPreviews}
           />
         )}
       </main>
       <aside className="w-80 border-l border-gray-800 p-4 overflow-y-auto shrink-0">
         <h2 className="text-lg font-semibold mb-4">AlexNet Visualizer</h2>
+
+        {modelData?.metadata.predictions && modelData.metadata.predictions.length > 0 && (
+          <div className="mb-4 p-3 rounded bg-gray-800/50">
+            <p className="text-sm font-medium mb-2">Top-5 Predictions</p>
+            <div className="space-y-2">
+              {modelData.metadata.predictions.map((p, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <div className="flex-1 h-4 bg-gray-700 rounded overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500/80 rounded"
+                      style={{ width: `${p.probability * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-xs text-gray-300 whitespace-nowrap max-w-[140px] truncate">
+                    {p.class_name}
+                  </span>
+                  <span className="text-xs text-gray-400">
+                    {(p.probability * 100).toFixed(1)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <button
+          onClick={() => setShowPreviews((p) => !p)}
+          className="w-full px-4 py-2 mb-4 bg-gray-700 hover:bg-gray-600 rounded text-sm"
+        >
+          {showPreviews ? 'Hide Previews' : 'Show Previews'}
+        </button>
 
         {rfSelection && modelData && (
           <div className="space-y-3 mb-4 p-3 rounded bg-gray-800/50">
@@ -182,29 +224,40 @@ function App() {
                 </p>
               </div>
             )}
-            <div>
-              <label className="text-sm text-gray-400 block mb-1">
-                {isInput ? channelLabel : `Channel: ${getChannel(selectedLayer.def.id)}`}
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={maxChannel}
-                value={Math.min(getChannel(selectedLayer.def.id), maxChannel)}
-                onChange={(e) =>
-                  setSyncedChannel(selectedLayer.def.id, Number(e.target.value))
-                }
-                className="w-full"
-              />
-            </div>
-            <div>
-              <button
-                onClick={handleExplodeToggle}
-                className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
-              >
-                {explodedBlock === selectedLayer.def.id ? 'Collapse' : 'Explode View'}
-              </button>
-            </div>
+            {!is1D && (
+              <div>
+                <label className="text-sm text-gray-400 block mb-1">
+                  {isInput ? channelLabel : `Channel: ${getChannel(selectedLayer.def.id)}`}
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={maxChannel}
+                  value={Math.min(getChannel(selectedLayer.def.id), maxChannel)}
+                  onChange={(e) =>
+                    setSyncedChannel(selectedLayer.def.id, Number(e.target.value))
+                  }
+                  className="w-full"
+                />
+              </div>
+            )}
+            {is1D && (
+              <div>
+                <p className="text-sm text-gray-400">
+                  Vector: {selectedLayer.def.shape[0]} neurons
+                </p>
+              </div>
+            )}
+            {!is1D && (
+              <div>
+                <button
+                  onClick={handleExplodeToggle}
+                  className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm"
+                >
+                  {explodedBlock === selectedLayer.def.id ? 'Collapse' : 'Explode View'}
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <p className="text-sm text-gray-400">Click a layer to inspect</p>

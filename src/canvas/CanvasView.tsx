@@ -29,13 +29,21 @@ interface CanvasViewProps {
   onChannelSelect?: (blockId: string, channel: number) => void;
   onRfSelect?: (sel: RfSelection | null) => void;
   onRfMiniChannelChange?: (layerId: string, delta: number) => void;
+  showPreviews: boolean;
 }
+
+const SOFTMAX_ROW_H = 16;
+const SOFTMAX_VISIBLE_ROWS = 18;
 
 const LAYER_COLORS: Record<string, string> = {
   input: '#4a9eff',
   conv: '#ff6b6b',
   relu: '#51cf66',
   maxpool: '#ffd43b',
+  linear: '#a78bfa',
+  adaptive_avg_pool: '#f472b6',
+  flatten: '#34d399',
+  softmax: '#fbbf24',
 };
 
 const THUMB_SIZE = 40;
@@ -66,17 +74,138 @@ function getFilter(
   return weights.slice(outChannel * filterSize, (outChannel + 1) * filterSize);
 }
 
+function drawLinearWeightHeatmap(
+  ctx: CanvasRenderingContext2D,
+  block: LayerBlock,
+  modelData: ModelData,
+) {
+  const layer = modelData.layers.get(block.id);
+  if (!layer?.weights) return false;
+
+  const { x, y, width, height } = block;
+  const w = layer.weights.data;
+  const [outF, inF] = layer.weights.shape;
+  const { min: wMin, max: wMax } = minMax(w);
+  const range = wMax - wMin || 1;
+  const sampleH = Math.min(128, outF);
+  const sampleW = Math.min(128, inF);
+  const imgData = ctx.createImageData(sampleW, sampleH);
+  for (let r = 0; r < sampleH; r++) {
+    for (let c = 0; c < sampleW; c++) {
+      const srcRow = Math.floor((r / sampleH) * outF);
+      const srcCol = Math.floor((c / sampleW) * inF);
+      const norm = (w[srcRow * inF + srcCol] - wMin) / range;
+      const [rv, gv, bv] = valueToColor(norm);
+      const idx = (r * sampleW + c) * 4;
+      imgData.data[idx] = rv;
+      imgData.data[idx + 1] = gv;
+      imgData.data[idx + 2] = bv;
+      imgData.data[idx + 3] = 255;
+    }
+  }
+  const offscreen = new OffscreenCanvas(sampleW, sampleH);
+  const offCtx = offscreen.getContext('2d')!;
+  offCtx.putImageData(imgData, 0, 0);
+  ctx.drawImage(offscreen, x, y, width, height);
+  return true;
+}
+
+function drawSoftmaxBlock(
+  ctx: CanvasRenderingContext2D,
+  block: LayerBlock,
+  modelData: ModelData,
+  scrollOffset: number,
+) {
+  const { x, y, width, height } = block;
+  const layer = modelData.layers.get(block.id);
+  if (!layer) return;
+
+  ctx.fillStyle = '#111';
+  ctx.fillRect(x, y, width, height);
+
+  const data = layer.activations.data;
+  const n = data.length;
+  const indexed: { idx: number; prob: number }[] = [];
+  for (let i = 0; i < n; i++) indexed.push({ idx: i, prob: data[i] });
+  indexed.sort((a, b) => b.prob - a.prob);
+
+  const classNames = new Map<number, string>();
+  if (modelData.metadata.categories) {
+    const cats = modelData.metadata.categories;
+    for (let i = 0; i < cats.length; i++) classNames.set(i, cats[i]);
+  } else if (modelData.metadata.predictions) {
+    for (const p of modelData.metadata.predictions) classNames.set(p.class_idx, p.class_name);
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, width, height);
+  ctx.clip();
+
+  const visibleRows = Math.floor(height / SOFTMAX_ROW_H);
+  const startIdx = Math.max(0, Math.min(scrollOffset, n - visibleRows));
+  const barMaxW = width * 0.45;
+
+  for (let i = 0; i < visibleRows && startIdx + i < n; i++) {
+    const entry = indexed[startIdx + i];
+    const ry = y + i * SOFTMAX_ROW_H;
+    const barW = entry.prob * barMaxW;
+
+    const intensity = Math.max(0.15, entry.prob * 3);
+    ctx.fillStyle = `rgba(251, 191, 36, ${intensity})`;
+    ctx.fillRect(x + 2, ry + 2, barW, SOFTMAX_ROW_H - 4);
+
+    const rank = startIdx + i;
+    const name = classNames.get(entry.idx) ?? `class ${entry.idx}`;
+    const pctStr = entry.prob >= 0.01
+      ? `${(entry.prob * 100).toFixed(1)}%`
+      : entry.prob >= 0.001
+        ? `${(entry.prob * 100).toFixed(2)}%`
+        : `${(entry.prob * 100).toExponential(0)}`;
+
+    ctx.fillStyle = rank < 5 ? '#fff' : '#aaa';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    const label = `${name}`;
+    ctx.fillText(label, x + barMaxW + 6, ry + SOFTMAX_ROW_H - 4, width - barMaxW - 10);
+
+    ctx.fillStyle = '#888';
+    ctx.textAlign = 'right';
+    ctx.fillText(pctStr, x + barMaxW + 2, ry + SOFTMAX_ROW_H - 4);
+  }
+
+  ctx.restore();
+
+  if (n > visibleRows) {
+    const trackH = height - 4;
+    const thumbH = Math.max(20, (visibleRows / n) * trackH);
+    const thumbY = y + 2 + ((startIdx / (n - visibleRows)) * (trackH - thumbH));
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(x + width - 4, y + 2, 3, trackH);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillRect(x + width - 4, thumbY, 3, thumbH);
+  }
+}
+
 function drawBlock(
   ctx: CanvasRenderingContext2D,
   block: LayerBlock,
   modelData: ModelData,
   channelMap: Record<string, number>,
   imageRef: React.RefObject<HTMLImageElement | null>,
+  softmaxScroll: number,
 ) {
   const { x, y, width, height, depthOffsetX, depthOffsetY } = block;
   const baseColor = LAYER_COLORS[block.type] || '#888';
 
-  if (block.isKernel && block.parentConvId) {
+  if (block.type === 'linear' && block.is1D) {
+    if (!drawLinearWeightHeatmap(ctx, block, modelData)) {
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(x, y, width, height);
+    }
+  } else if (block.type === 'softmax' && block.is1D) {
+    drawSoftmaxBlock(ctx, block, modelData, softmaxScroll);
+  } else if (block.isKernel && block.parentConvId) {
     const parentLayer = modelData.layers.get(block.parentConvId);
     if (parentLayer?.weights) {
       const outCh = Math.min(
@@ -190,31 +319,33 @@ function drawBlock(
   ctx.lineWidth = 1;
   ctx.strokeRect(x, y, width, height);
 
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x + depthOffsetX, y + depthOffsetY);
-  ctx.lineTo(x + width + depthOffsetX, y + depthOffsetY);
-  ctx.lineTo(x + width, y);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(255,255,255,0.08)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.stroke();
+  if (block.depthPx > 0) {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + depthOffsetX, y + depthOffsetY);
+    ctx.lineTo(x + width + depthOffsetX, y + depthOffsetY);
+    ctx.lineTo(x + width, y);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.stroke();
 
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x + depthOffsetX, y + depthOffsetY);
-  ctx.lineTo(x + depthOffsetX, y + height + depthOffsetY);
-  ctx.lineTo(x, y + height);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(0,0,0,0.15)';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + depthOffsetX, y + depthOffsetY);
+    ctx.lineTo(x + depthOffsetX, y + height + depthOffsetY);
+    ctx.lineTo(x, y + height);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.stroke();
+  }
 
   const selCh = channelMap[block.id] ?? 0;
   let t = -1;
-  if (!block.isKernel && block.channels > 0) {
+  if (!block.isKernel && block.channels > 0 && !block.is1D) {
     if (block.type === 'input') {
       if (selCh >= 1 && selCh <= 3) t = (selCh - 1) / 3;
     } else if (selCh < block.channels) {
@@ -222,13 +353,15 @@ function drawBlock(
     }
   }
   if (t >= 0) {
-    const ly = y + t * height;
-    const ry = y + depthOffsetY + t * height;
+    const lx = x + t * depthOffsetX;
+    const ly = y + t * depthOffsetY;
+    const rx = x + width + t * depthOffsetX;
+    const ry = y + t * depthOffsetY;
     ctx.strokeStyle = '#ff0';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(x, ly);
-    ctx.lineTo(x + depthOffsetX, ry);
+    ctx.moveTo(lx, ly);
+    ctx.lineTo(rx, ry);
     ctx.stroke();
   }
 
@@ -249,6 +382,7 @@ function drawExplodedBlock(
   channelMap: Record<string, number>,
   _imageRef: React.RefObject<HTMLImageElement | null>,
 ) {
+  if (block.is1D) return;
   const { x } = block;
   const gridStartY = block.y + block.height + 40;
   const layer = modelData.layers.get(block.id);
@@ -457,6 +591,71 @@ function drawRfMiniBlock(
   ctx.setLineDash([]);
 }
 
+const PREVIEW_TARGET_PX = 200;
+
+function getPreviewScale(layout: SceneLayout): number {
+  let maxSpatial = 0;
+  for (const block of layout.blocks) {
+    if (block.isKernel || block.type === 'input') continue;
+    maxSpatial = Math.max(maxSpatial, block.spatialH, block.spatialW);
+  }
+  return maxSpatial > 0 ? PREVIEW_TARGET_PX / maxSpatial : 1;
+}
+
+function getPreviewBounds(
+  block: LayerBlock,
+  previewScale: number,
+): { x: number; y: number; w: number; h: number } {
+  const w = block.spatialW * previewScale;
+  const h = block.spatialH * previewScale;
+  const px = block.x + block.width / 2 - w / 2;
+  const py = block.y + block.depthOffsetY - h - 20;
+  return { x: px, y: py, w, h };
+}
+
+function drawPreviews(
+  ctx: CanvasRenderingContext2D,
+  layout: SceneLayout,
+  modelData: ModelData,
+  channelMap: Record<string, number>,
+) {
+  const previewScale = getPreviewScale(layout);
+  for (const block of layout.blocks) {
+    if (block.isKernel || block.type === 'input' || block.is1D) continue;
+    const layer = modelData.layers.get(block.id);
+    if (!layer) continue;
+
+    const ch = Math.min(channelMap[block.id] ?? 0, block.channels - 1);
+    const channelData = getChannel(layer.activations.data, layer.activations.shape, ch);
+    const { min, max } = minMax(channelData);
+    const normalized = normalize(channelData, min, max);
+
+    const { x: px, y: py, w: pw, h: ph } = getPreviewBounds(block, previewScale);
+
+    const imgData = ctx.createImageData(block.spatialW, block.spatialH);
+    for (let i = 0; i < normalized.length; i++) {
+      const [r, g, b] = valueToColor(normalized[i]);
+      imgData.data[i * 4] = r;
+      imgData.data[i * 4 + 1] = g;
+      imgData.data[i * 4 + 2] = b;
+      imgData.data[i * 4 + 3] = 255;
+    }
+    const offscreen = new OffscreenCanvas(block.spatialW, block.spatialH);
+    const offCtx = offscreen.getContext('2d')!;
+    offCtx.putImageData(imgData, 0, 0);
+    ctx.drawImage(offscreen, px, py, pw, ph);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px, py, pw, ph);
+
+    ctx.fillStyle = '#999';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${block.spatialH}x${block.spatialW}`, px + pw / 2, py - 4);
+  }
+}
+
 function drawScene(
   ctx: CanvasRenderingContext2D,
   layout: SceneLayout,
@@ -467,6 +666,8 @@ function drawScene(
   explodedBlock: string | null,
   imageRef: React.RefObject<HTMLImageElement | null>,
   rfSelection: RfSelection | null,
+  showPreviews: boolean,
+  softmaxScroll: number,
 ) {
   const { width: cw, height: ch } = ctx.canvas;
   ctx.clearRect(0, 0, cw, ch);
@@ -477,48 +678,17 @@ function drawScene(
 
   for (const block of layout.blocks) {
     if (block.isKernel) {
-      drawBlock(ctx, block, modelData, channelMap, imageRef);
+      drawBlock(ctx, block, modelData, channelMap, imageRef, softmaxScroll);
     } else if (block.id === explodedBlock) {
-      drawBlock(ctx, block, modelData, channelMap, imageRef);
+      drawBlock(ctx, block, modelData, channelMap, imageRef, softmaxScroll);
       drawExplodedBlock(ctx, block, modelData, channelMap, imageRef);
     } else {
-      drawBlock(ctx, block, modelData, channelMap, imageRef);
+      drawBlock(ctx, block, modelData, channelMap, imageRef, softmaxScroll);
     }
   }
 
-  if (!rfSelection) {
-    for (const block of layout.blocks) {
-      if (!block.isKernel && block.id !== 'input') {
-        const layer = modelData.layers.get(block.id);
-        if (layer) {
-          const ch = Math.min(channelMap[block.id] ?? 0, block.channels - 1);
-          const channelData = getChannel(layer.activations.data, layer.activations.shape, ch);
-          const { min, max } = minMax(channelData);
-          const normalized = normalize(channelData, min, max);
-          const maxSide = Math.max(block.spatialW, block.spatialH);
-          const scale = Math.min(100 / maxSide, 1);
-          const prevW = block.spatialW * scale;
-          const prevH = block.spatialH * scale;
-          const prevX = block.x + block.width / 2 - prevW / 2;
-          const prevY = block.y - prevH - 25;
-          const imgData = ctx.createImageData(block.spatialW, block.spatialH);
-          for (let i = 0; i < normalized.length; i++) {
-            const [r, g, b] = valueToColor(normalized[i]);
-            imgData.data[i * 4] = r;
-            imgData.data[i * 4 + 1] = g;
-            imgData.data[i * 4 + 2] = b;
-            imgData.data[i * 4 + 3] = 255;
-          }
-          const offscreen = new OffscreenCanvas(block.spatialW, block.spatialH);
-          const offCtx = offscreen.getContext('2d')!;
-          offCtx.putImageData(imgData, 0, 0);
-          ctx.drawImage(offscreen, prevX, prevY, prevW, prevH);
-          ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(prevX, prevY, prevW, prevH);
-        }
-      }
-    }
+  if (showPreviews) {
+    drawPreviews(ctx, layout, modelData, channelMap);
   }
 
   if (rfSelection) {
@@ -531,7 +701,7 @@ function drawScene(
 
     for (const region of regions) {
       const block = layout.blocks.find((b) => b.id === region.layerId && !b.isKernel);
-      if (!block) continue;
+      if (!block || block.is1D) continue;
 
       const pxPerRow = block.height / block.spatialH;
       const pxPerCol = block.width / block.spatialW;
@@ -612,7 +782,8 @@ function drawScene(
 
     for (const region of regions) {
       const block = layout.blocks.find((b) => b.id === region.layerId && !b.isKernel);
-      if (block) {
+      const layer = modelData.layers.get(region.layerId);
+      if (block && layer && layer.activations.shape.length === 3) {
         drawRfMiniBlock(ctx, block, region, modelData, channelMap, rfMiniChannelMap);
       }
     }
@@ -632,6 +803,7 @@ export default function CanvasView({
   onChannelSelect,
   onRfSelect,
   onRfMiniChannelChange,
+  showPreviews,
 }: CanvasViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -645,6 +817,7 @@ export default function CanvasView({
   transformRef.current = transform;
   const isPanning = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
+  const [softmaxScroll, setSoftmaxScroll] = useState(0);
 
   const layout = computeLayout(modelData.metadata.layers);
 
@@ -683,6 +856,21 @@ export default function CanvasView({
     [layout, modelData, rfSelection]
   );
 
+  const getSoftmaxBlockAtPoint = useCallback(
+    (rx: number, ry: number): LayerBlock | null => {
+      for (const block of layout.blocks) {
+        if (block.type === 'softmax' && block.is1D) {
+          if (rx >= block.x && rx <= block.x + block.width &&
+              ry >= block.y && ry <= block.y + block.height) {
+            return block;
+          }
+        }
+      }
+      return null;
+    },
+    [layout]
+  );
+
   const handleWheel = useCallback(
     (e: WheelEvent) => {
       e.preventDefault();
@@ -701,6 +889,17 @@ export default function CanvasView({
         return;
       }
 
+      const smBlock = getSoftmaxBlockAtPoint(rx, ry);
+      if (smBlock) {
+        const scrollStep = e.deltaY > 0 ? 3 : -3;
+        const totalClasses = smBlock.channels;
+        const visibleRows = Math.floor(smBlock.height / SOFTMAX_ROW_H);
+        setSoftmaxScroll((prev) =>
+          Math.max(0, Math.min(totalClasses - visibleRows, prev + scrollStep))
+        );
+        return;
+      }
+
       const t = transformRef.current;
       const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
       const newScale = Math.max(0.05, Math.min(5, t.scale * zoomFactor));
@@ -711,7 +910,7 @@ export default function CanvasView({
         scale: newScale,
       });
     },
-    [getRfMiniBlockAtPoint, onRfMiniChannelChange]
+    [getRfMiniBlockAtPoint, onRfMiniChannelChange, getSoftmaxBlockAtPoint]
   );
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -788,6 +987,28 @@ export default function CanvasView({
     [layout, transform, explodedBlock]
   );
 
+  const getPreviewAtPoint = useCallback(
+    (rx: number, ry: number): { block: LayerBlock; row: number; col: number } | null => {
+      if (!showPreviews) return null;
+      const previewScale = getPreviewScale(layout);
+      for (const block of layout.blocks) {
+        if (block.isKernel || block.type === 'input') continue;
+        const { x, y, w, h } = getPreviewBounds(block, previewScale);
+        if (rx >= x && rx <= x + w && ry >= y && ry <= y + h) {
+          const row = Math.floor(((ry - y) / h) * block.spatialH);
+          const col = Math.floor(((rx - x) / w) * block.spatialW);
+          return {
+            block,
+            row: Math.max(0, Math.min(block.spatialH - 1, row)),
+            col: Math.max(0, Math.min(block.spatialW - 1, col)),
+          };
+        }
+      }
+      return null;
+    },
+    [layout, showPreviews]
+  );
+
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       const canvas = canvasRef.current;
@@ -795,17 +1016,39 @@ export default function CanvasView({
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
+      const rx = (mx - transform.offsetX) / transform.scale;
+      const ry = (my - transform.offsetY) / transform.scale;
+      const miniHit = getRfMiniBlockAtPoint(rx, ry);
+      if (miniHit) {
+        onBlockClick?.(miniHit.layerId);
+        return;
+      }
+      const previewHit = getPreviewAtPoint(rx, ry);
+      if (previewHit) {
+        onRfSelect?.({
+          layerId: previewHit.block.id,
+          channel: channelMap[previewHit.block.id] ?? 0,
+          row: previewHit.row,
+          col: previewHit.col,
+        });
+        onBlockClick?.(previewHit.block.id);
+        return;
+      }
       const hit = getBlockAtPoint(mx, my);
 
       if (!hit) {
         onRfSelect?.(null);
+        onExplode?.(null);
         return;
       }
 
       if (hit.channel !== undefined && onChannelSelect) {
         onChannelSelect(hit.block.id, hit.channel);
-        onExplode?.(null);
         return;
+      }
+      const clickedLayerId = hit.block.isKernel && hit.block.parentConvId ? hit.block.parentConvId : hit.block.id;
+      if (clickedLayerId !== explodedBlock) {
+        onExplode?.(null);
       }
       if (hit.block.isKernel && hit.block.parentConvId && onBlockClick) {
         onBlockClick(hit.block.parentConvId);
@@ -839,6 +1082,7 @@ export default function CanvasView({
     },
     [
       getBlockAtPoint,
+      getPreviewAtPoint,
       onBlockClick,
       onExplode,
       onChannelSelect,
@@ -887,8 +1131,10 @@ export default function CanvasView({
       explodedBlock,
       imageRef,
       rfSelection,
+      showPreviews,
+      softmaxScroll,
     );
-  }, [layout, modelData, transform, channelMap, rfMiniChannelMap, explodedBlock, rfSelection]);
+  }, [layout, modelData, transform, channelMap, rfMiniChannelMap, explodedBlock, rfSelection, showPreviews, softmaxScroll]);
 
   return (
     <div ref={containerRef} className="absolute inset-0">

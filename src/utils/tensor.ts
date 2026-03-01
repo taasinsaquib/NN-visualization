@@ -15,6 +15,9 @@ export function getChannel(
   shape: number[],
   channel: number
 ): Float32Array {
+  if (shape.length === 1) {
+    return data;
+  }
   const [, H, W] = shape;
   const size = H * W;
   const out = new Float32Array(size);

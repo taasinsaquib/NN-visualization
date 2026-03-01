@@ -42,10 +42,12 @@ export function computeReceptiveFieldChain(
       const newEndRow = (endRow - 1) * stride - padding + kernelSize;
       const newEndCol = (endCol - 1) * stride - padding + kernelSize;
 
+      const inH = inputLayer.shape.length >= 3 ? inputLayer.shape[1]! : 1;
+      const inW = inputLayer.shape.length >= 3 ? inputLayer.shape[2]! : 1;
       startRow = Math.max(0, newStartRow);
       startCol = Math.max(0, newStartCol);
-      endRow = Math.min(inputLayer.shape[1], newEndRow);
-      endCol = Math.min(inputLayer.shape[2], newEndCol);
+      endRow = Math.min(inH, newEndRow);
+      endCol = Math.min(inW, newEndCol);
     }
 
     regions.push({

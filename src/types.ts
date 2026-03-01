@@ -1,9 +1,17 @@
-export type LayerType = 'input' | 'conv' | 'relu' | 'maxpool';
+export type LayerType =
+  | 'input'
+  | 'conv'
+  | 'relu'
+  | 'maxpool'
+  | 'linear'
+  | 'adaptive_avg_pool'
+  | 'flatten'
+  | 'softmax';
 
 export interface LayerDef {
   id: string;
   type: LayerType;
-  shape: [number, number, number];
+  shape: [number, number, number] | [number];
   activations_file: string;
   input_layer?: string;
   groups?: number;
@@ -11,6 +19,8 @@ export interface LayerDef {
   stride?: number;
   padding?: number;
   in_channels?: number;
+  out_features?: number;
+  in_features?: number;
   weights_file?: string;
   weights_shape?: number[];
   bias_file?: string;
@@ -19,6 +29,8 @@ export interface LayerDef {
 export interface ModelMetadata {
   image: string;
   layers: LayerDef[];
+  predictions?: { class_idx: number; class_name: string; probability: number }[];
+  categories?: string[];
 }
 
 export interface TensorData {
